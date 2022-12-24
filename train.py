@@ -1,5 +1,6 @@
 import os
-os.environ['CUDA_VISIBLE_DEVICES'] = '0, 1, 3, 4, 5'
+
+os.environ['CUDA_VISIBLE_DEVICES'] = '5, 0'
 
 import time
 import torch.backends.cudnn as cudnn
@@ -27,6 +28,7 @@ def seed_everything(seed=42):
     torch.manual_seed(seed)
     torch.cuda.manual_seed(seed)
     torch.backends.cudnn.deterministic = True
+
 
 # Data parameters
 data_name = 'coco_5_cap_per_img_5_min_word_freq'  # base name shared by data files
@@ -61,16 +63,16 @@ def main():
 
     # Initialize / load checkpoint
     decoder = DecoderWithAttention(
-                                   embed_dim=emb_dim,
-                                   decoder_dim=decoder_dim,
-                                   vocab_size=len(word_map),
-                                   dropout=dropout)
+        embed_dim=emb_dim,
+        decoder_dim=decoder_dim,
+        vocab_size=len(word_map),
+        dropout=dropout)
     for name, param in decoder.named_parameters():
         if param.requires_grad:
             print(name)
 
     # torch.distributed.init_process_group(backend="nccl")
-    decoder = nn.DataParallel(decoder, device_ids=[0, 1, 2, 3, 4]).cuda()
+    decoder = nn.DataParallel(decoder, device_ids=[0, 1]).cuda()
     # decoder = decoder.cuda()
     # decoder = nn.parallel.DistributedDataParallel(decoder)
     # decoder = decoder.cuda()
@@ -103,14 +105,14 @@ def main():
         {'params': [p for n, p in named_parameters if 'visualBERT' not in n], 'lr': 2e-3},
     ]
     decoder_optimizer = BertAdam(parameters,
-                                  lr=2e-3,
+                                 lr=2e-3,
                                  warmup=0.1,
                                  t_total=t_total)
     # Epochs
     for epoch in range(start_epoch, epochs):
 
         # Decay learning rate if there is no improvement for 8 consecutive epochs, and terminate training after 20
-        if epochs_since_improvement == 10:
+        if epochs_since_improvement == 100:
             break
         if epochs_since_improvement > 0 and epochs_since_improvement % 5 == 0:
             adjust_learning_rate(decoder_optimizer, 0.8)
@@ -158,7 +160,7 @@ def main():
                         words.remove('<pad>')
                     f.write(' '.join(words) + '\n')
 
-            with open('vb_dis_pred_ten_stage.txt', 'w') as f:
+            with open('pred.txt', 'w') as f:
                 for r in tqdm(hypotheses):
                     words = [idx2word[i] for i in r]
                     while '<end>' in words:
@@ -171,15 +173,15 @@ def main():
 
 
 # validate(val_loader=valid_loader,
-    #          decoder=decoder,
-    #          criterion_ce=criterion_ce,
-    #          criterion_dis=criterion_dis,
-    #          word_map=word_map)
-    # validate(val_loader=test_loader,
-    #          decoder=decoder,
-    #          criterion_ce=criterion_ce,
-    #          criterion_dis=criterion_dis,
-    #          word_map=word_map)
+#          decoder=decoder,
+#          criterion_ce=criterion_ce,
+#          criterion_dis=criterion_dis,
+#          word_map=word_map)
+# validate(val_loader=test_loader,
+#          decoder=decoder,
+#          criterion_ce=criterion_ce,
+#          criterion_dis=criterion_dis,
+#          word_map=word_map)
 
 def train(train_loader, decoder, criterion_ce, criterion_sort, criterion_dis, decoder_optimizer, epoch):
     """
@@ -203,8 +205,9 @@ def train(train_loader, decoder, criterion_ce, criterion_sort, criterion_dis, de
     count = 0
     # Batches
     for i, (visual_embeds, visual_token_type_ids, visual_attention_mask,
-               sentence_gt, sentence_gt_length, sentence_inputs_input_ids,
-               sentence_inputs_token_type_ids, sentence_inputs_mask, sentence_input, obj, gt_obj, obj_vis, obj_pos, hard_perm) in enumerate(train_loader):
+            sentence_gt, sentence_gt_length, sentence_inputs_input_ids,
+            sentence_inputs_token_type_ids, sentence_inputs_mask, sentence_input, obj, gt_obj, obj_vis, obj_pos,
+            hard_perm) in enumerate(train_loader):
         data_time.update(time.time() - start)
 
         # Move to GPU, if available
@@ -227,15 +230,19 @@ def train(train_loader, decoder, criterion_ce, criterion_sort, criterion_dis, de
         sentence_inputs_mask = Variable(sentence_inputs_mask.cuda(), **var_params)
 
         # Forward prop.
-        outputs, soft_perm,enc_out, enc_sim_phrase = decoder(visual_embeds, visual_token_type_ids, visual_attention_mask,
-                sentence_gt, sentence_gt_length, sentence_inputs_input_ids,sentence_inputs_token_type_ids,
-                                         sentence_inputs_mask, sentence_input, obj, obj_vis, obj_pos, gt_obj, teacher_forcing=True)
-        
+        outputs, soft_perm, enc_out, enc_sim_phrase = decoder(visual_embeds, visual_token_type_ids,
+                                                              visual_attention_mask,
+                                                              sentence_gt, sentence_gt_length,
+                                                              sentence_inputs_input_ids, sentence_inputs_token_type_ids,
+                                                              sentence_inputs_mask, sentence_input, obj, obj_vis,
+                                                              obj_pos, gt_obj, teacher_force=True)
+
         # Max-pooling across predicted words across time steps for discriminative supervision
         sentence_gt_length = (sentence_gt_length - 1).squeeze(dim=-1).cpu().numpy().tolist()
         targets = sentence_gt[:, 1:]
 
-        outputs = pack_padded_sequence(outputs[:, 1:, :], sentence_gt_length, batch_first=True, enforce_sorted=False).data
+        outputs = pack_padded_sequence(outputs[:, 1:, :], sentence_gt_length, batch_first=True,
+                                       enforce_sorted=False).data
         targets = pack_padded_sequence(targets, sentence_gt_length, batch_first=True, enforce_sorted=False).data
         loss1 = criterion_ce(outputs, targets)
         loss2 = criterion_sort(soft_perm, hard_perm)
@@ -299,8 +306,9 @@ def validate(val_loader, decoder, criterion_ce, criterion_sort, criterion_dis, w
     # Batches
     with torch.no_grad():
         for i, (visual_embeds, visual_token_type_ids, visual_attention_mask,
-               sentence_gt, sentence_gt_length, sentence_inputs_input_ids,
-               sentence_inputs_token_type_ids, sentence_inputs_mask, sentence_input, obj, gt_obj, obj_vis, obj_pos, hard_perm) in enumerate(val_loader):
+                sentence_gt, sentence_gt_length, sentence_inputs_input_ids,
+                sentence_inputs_token_type_ids, sentence_inputs_mask, sentence_input, obj, gt_obj, obj_vis, obj_pos,
+                hard_perm) in enumerate(val_loader):
 
             obj_vis, obj_pos = obj_vis.cuda(), obj_pos.cuda()
             obj = obj.cuda()
@@ -321,21 +329,24 @@ def validate(val_loader, decoder, criterion_ce, criterion_sort, criterion_dis, w
             sentence_inputs_mask = Variable(sentence_inputs_mask.cuda(), **var_params)
 
             # Forward prop.
-            outputs, soft_perm, enc_out, enc_sim_phrase = decoder(visual_embeds, visual_token_type_ids, visual_attention_mask,
-                              sentence_gt, sentence_gt_length, sentence_inputs_input_ids,
-                              sentence_inputs_token_type_ids,
-                              sentence_inputs_mask, sentence_input, obj, obj_vis, obj_pos)
+            outputs, soft_perm, enc_out, enc_sim_phrase = decoder(visual_embeds, visual_token_type_ids,
+                                                                  visual_attention_mask,
+                                                                  sentence_gt, sentence_gt_length,
+                                                                  sentence_inputs_input_ids,
+                                                                  sentence_inputs_token_type_ids,
+                                                                  sentence_inputs_mask, sentence_input, obj, obj_vis,
+                                                                  obj_pos)
 
             # Max-pooling across predicted words across time steps for discriminative supervision
             sentence_gt_length = (sentence_gt_length - 1).squeeze().cpu().numpy().tolist()
             targets = sentence_gt[:, 1:]
             outputs_copy = outputs.clone()
-            outputs = pack_padded_sequence(outputs[:, 1:, :], sentence_gt_length, batch_first=True, enforce_sorted=False).data
+            outputs = pack_padded_sequence(outputs[:, 1:, :], sentence_gt_length, batch_first=True,
+                                           enforce_sorted=False).data
             targets = pack_padded_sequence(targets, sentence_gt_length, batch_first=True, enforce_sorted=False).data
             loss1 = criterion_ce(outputs, targets)
             loss2 = criterion_sort(soft_perm, hard_perm)
             loss3 = criterion_dis(enc_out, enc_sim_phrase)
-
 
             loss = loss1 + loss2 * 10 + loss3 * 10
 
@@ -351,7 +362,8 @@ def validate(val_loader, decoder, criterion_ce, criterion_sort, criterion_dis, w
                 print('Validation: [{0}/{1}]\t'
                       'Batch Time {batch_time.val:.3f} ({batch_time.avg:.3f})\t'
                       'Loss {loss.val:.4f} ({loss.avg:.4f})\t'
-                      'Top-5 Accuracy {top5.val:.3f} ({top5.avg:.3f})\t'.format(i, len(val_loader), batch_time=batch_time,
+                      'Top-5 Accuracy {top5.val:.3f} ({top5.avg:.3f})\t'.format(i, len(val_loader),
+                                                                                batch_time=batch_time,
                                                                                 loss=losses, top5=top5accs))
                 print(f'loss1 & loss2 & loss3:', loss1, loss2, loss3)
 
@@ -362,7 +374,8 @@ def validate(val_loader, decoder, criterion_ce, criterion_sort, criterion_dis, w
             # References
             for j in range(sentence_gt.shape[0]):
                 img_ques = sentence_gt[j].cpu().numpy().tolist()
-                img_sentence_gts = [w for w in img_ques if w not in {word_map['<start>'], word_map['<end>'], word_map['<pad>']}]
+                img_sentence_gts = [w for w in img_ques if
+                                    w not in {word_map['<start>'], word_map['<end>'], word_map['<pad>']}]
                 references.append(img_sentence_gts)
 
             # Hypotheses
@@ -399,8 +412,8 @@ def validate(val_loader, decoder, criterion_ce, criterion_sort, criterion_dis, w
             words.remove('<pad>')
         hypotheses_2.append([' '.join(words)])
 
-    gen = {i:s for i,s in enumerate(hypotheses_2)}
-    ref = {i:s for i,s in enumerate(references_2)}
+    gen = {i: s for i, s in enumerate(hypotheses_2)}
+    ref = {i: s for i, s in enumerate(references_2)}
     print(hypotheses_2[:5])
     print(references_2[:5])
 
@@ -410,7 +423,7 @@ def validate(val_loader, decoder, criterion_ce, criterion_sort, criterion_dis, w
             loss=losses,
             top5=top5accs))
     # print('bleu: %s, cider: %.6s, meteor: %.6s, rouge: %.6s' % (bleu, None, None, None))
-    print('bleu: %s' %bleu)
+    print('bleu: %s' % bleu)
     return bleu[-1][-1], references, hypotheses
 
 

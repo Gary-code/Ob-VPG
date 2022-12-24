@@ -1,8 +1,8 @@
-# Visual Paraphrase Generation with Key Information Retained
+# Ob-VPG: Object-level Visual Paraphrase Generation
 
-> Key code for [paper]()
+> Official code for [Visual Paraphrase Generation with Key Information Retained]()
 
-![model-614](https://s2.loli.net/2022/06/14/djxnNMizwuT4bS8.png)
+![model-614](./pic/model.png)
 
 ## Requirements and Setup
 

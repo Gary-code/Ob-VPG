@@ -69,6 +69,7 @@ class ObjectAttention(nn.Module):
     """
     Object Attention Network
     """
+
     def __init__(self, objects_dim, decoder_dim, attention_dim, dropout=0.5):
         """
         :param features_dim: feature size of encoded images
@@ -76,13 +77,15 @@ class ObjectAttention(nn.Module):
         :param attention_dim: size of the attention network
         """
         super(ObjectAttention, self).__init__()
-        self.features_att = weight_norm(nn.Linear(objects_dim, attention_dim))  # linear layer to transform encoded image
-        self.decoder_att = weight_norm(nn.Linear(decoder_dim, attention_dim))   # linear layer to transform decoder's output
+        self.features_att = weight_norm(
+            nn.Linear(objects_dim, attention_dim))  # linear layer to transform encoded image
+        self.decoder_att = weight_norm(
+            nn.Linear(decoder_dim, attention_dim))  # linear layer to transform decoder's output
         self.full_att = weight_norm(nn.Linear(attention_dim, 1))  # linear layer to calculate values to be softmax-ed
         self.relu = nn.ReLU()
         self.dropout = nn.Dropout(p=dropout)
         self.softmax = nn.Softmax(dim=1)  # softmax layer to calculate weights
-        
+
     def forward(self, object_features, decoder_hidden):
         """
         Forward propagation.
@@ -177,15 +180,14 @@ class SinkhornNetwork(nn.Module):
         nn.init.xavier_normal_(self.W_fc.weight)
         nn.init.constant_(self.W_fc.bias, 0)
 
-
     # def sinkhorn(self, x):
-        # x = torch.exp(x / self.tau)  # exp initialize
+    # x = torch.exp(x / self.tau)  # exp initialize
 
-        # # simple sinkhorn
-        # for _ in range(self.n_iters):
-        #     x = x / (10e-8 + torch.sum(x, -2, keepdim=True))
-        #     x = x / (10e-8 + torch.sum(x, -1, keepdim=True))
-        # return x
+    # # simple sinkhorn
+    # for _ in range(self.n_iters):
+    #     x = x / (10e-8 + torch.sum(x, -2, keepdim=True))
+    #     x = x / (10e-8 + torch.sum(x, -1, keepdim=True))
+    # return x
 
     def sinkhorn(self, x):
         x = torch.exp(x / self.tau)  # exp initialize
@@ -236,13 +238,14 @@ class DecoderWithAttention(nn.Module):
 
         self.embedding = nn.Embedding(vocab_size, embed_dim)  # ``````````````` layer
         self.visualBERT = VisualBertModel.from_pretrained("uclanlp")
-        
+
         self.attention_obj = ObjectAttention(embed_dim, decoder_dim, decoder_dim)
 
         # self.answer_lstm = nn.LSTM(input_size=embed_dim, hidden_size=embed_dim, batch_first=True, dropout=dropout,
         #                            bidirectional=False)
 
-        self.sentence_lstm = nn.LSTM(input_size=embed_dim, hidden_size=embed_dim, batch_first=True, dropout=dropout, bidirectional=False)
+        self.sentence_lstm = nn.LSTM(input_size=embed_dim, hidden_size=embed_dim, batch_first=True, dropout=dropout,
+                                     bidirectional=False)
         self.onehot_lstm = TextEncoder(input_size=embed_dim, hidden_size=embed_dim, dropout=dropout)
         self.lstm = nn.LSTM(input_size=embed_dim, hidden_size=embed_dim, batch_first=True)
         self.embedding_dropout = nn.Dropout(self.dropout)
@@ -280,10 +283,9 @@ class DecoderWithAttention(nn.Module):
         predict_matrix = F.one_hot(soft_perm_matrix.argmax(dim=-1), encoded_objects.shape[1]).float()
         return torch.matmul(predict_matrix, encoded_objects.unsqueeze(2).float()).long()
 
-
     def forward(self, visual_embeds, visual_token_type_ids, visual_attention_mask,
                 sentence_gt, sentence_gt_length, sentence_inputs_input_ids, sentence_inputs_token_type_ids,
-                sentence_inputs_mask, sentence_input, obj, obj_vis, obj_pos, gt_obj=None, teacher_forcing=False, teacher_forcing_ratio=1.0):
+                sentence_inputs_mask, sentence_input, obj, obj_vis, obj_pos, gt_obj=None, teacher_force=False):
         """
         Forward propagation.
         :param encoder_out: encoded images, a tensor of dimension (batch_size, enc_image_size, enc_image_size, encoder_dim)
@@ -302,26 +304,24 @@ class DecoderWithAttention(nn.Module):
         sentences_input_embedding = self.embedding_dropout(self.embedding(sentence_input))
         sentences_lstm, (sentence_input_h1, sentence_input_c1) = self.sentence_lstm(sentences_input_embedding)
         h1, c1 = sentence_input_h1.squeeze(0), sentence_input_c1.squeeze(0)
-        
-        ctrl_det_idxs = torch.zeros((visual_embeds.shape[0], ), requires_grad=True).long().cuda()  # [b, ] detection ids
 
-        
+        ctrl_det_idxs = torch.zeros((visual_embeds.shape[0],), requires_grad=True).long().cuda()  # [b, ] detection ids
+
         objects_embedding = self.embedding(obj)
 
-        seq = torch.cat((objects_embedding, obj_vis, obj_pos, sentences_lstm[:, -objects_embedding.shape[1]:, :]), dim=-1)
+        seq = torch.cat((objects_embedding, obj_vis, obj_pos, sentences_lstm[:, -objects_embedding.shape[1]:, :]),
+                        dim=-1)
 
         soft_perm_matrix = self.sorting_network(seq)
 
         soft_perm_matrix = torch.transpose(soft_perm_matrix, 1, 2)
 
-        if teacher_forcing:
+        if teacher_force:
             obj_new_list = gt_obj
         else:
             obj_new_list = self.obj_tranform(soft_perm_matrix, obj).squeeze(-1)
 
         new_objects_embedding = self.embedding(obj_new_list)
-
-
 
         fusion_feature = self.visualBERT(input_ids=sentence_inputs_input_ids,
                                          token_type_ids=sentence_inputs_token_type_ids,
@@ -329,41 +329,12 @@ class DecoderWithAttention(nn.Module):
                                          visual_embeds=visual_embeds, visual_attention_mask=visual_attention_mask,
                                          visual_token_type_ids=visual_token_type_ids).last_hidden_state
         # print(f'fusion_feature.shape:', fusion_feature.shape)
-        sentence_embed = self.embedding_dropout(self.embedding(sentence_gt))   # (batch_size, max_caption_length, embed_dim)
+        sentence_embed = self.embedding_dropout(
+            self.embedding(sentence_gt))  # (batch_size, max_caption_length, embed_dim)
 
         bs, max_q_len, _ = sentence_embed.size()
-        # simple sentence
         outputs = torch.zeros(bs, max_q_len, self.vocab_size).cuda()
-        simple_sentence = torch.zeros(bs, max_q_len).cuda()
         output = sentence_embed[:, 0]
-        for i in range(1):
-            # generate simple sentence
-            for t in range(1, max_q_len):
-                if t > 1:
-                    ctrl_det_idxs = self.calculate_id(h1, ctrl_det_idxs, det_curr_emb)
-                det_curr = torch.gather(obj_new_list, 1, ctrl_det_idxs.unsqueeze(1))
-                # if the object is padding, move to another object
-                zero_ind = (det_curr == 0).int().squeeze(-1)
-                ctrl_det_idxs = ctrl_det_idxs + zero_ind
-                ctrl_det_idxs = torch.clamp(ctrl_det_idxs, 0, 2)
-                det_curr = torch.gather(obj_new_list, 1, ctrl_det_idxs.unsqueeze(1))
-
-                det_curr_emb = self.embedding(det_curr)  # [b, 1, 512]
-                output, h1, c1 = self.one_hot_decoder(output, h1, c1, fusion_feature, det_curr_emb)
-                outputs[:, t] = output
-                simple_sentence[:, t] = torch.argmax(output, dim=1)
-                teacher_force = random.random() < teacher_forcing_ratio
-                top1 = output.max(1)[1]
-                top1 = self.embedding_dropout(self.embedding(top1))
-                output = sentence_embed[:, t] if teacher_force else top1
-
-            sentences_input_embedding = self.embedding_dropout(self.embedding(simple_sentence.long()))
-            sentences_lstm, (sentence_input_h1, sentence_input_c1) = self.sentence_lstm(sentences_input_embedding)
-            h1, c1 = sentence_input_h1.squeeze(0), sentence_input_c1.squeeze(0)
-
-            # Create tensors to hold word predicion scores
-            outputs = torch.zeros(bs, max_q_len, self.vocab_size).cuda()
-            output = sentence_embed[:, 0]
 
         # generate one hot sentence
         for t in range(1, max_q_len):
@@ -379,7 +350,7 @@ class DecoderWithAttention(nn.Module):
             det_curr_emb = self.embedding(det_curr)  # [b, 1, 512]
             output, h1, c1 = self.one_hot_decoder(output, h1, c1, fusion_feature, det_curr_emb)
             outputs[:, t] = output
-            teacher_force = random.random() < teacher_forcing_ratio
+            # teacher_force = random.random() < teacher_forcing_ratio
             top1 = output.max(1)[1]
             top1 = self.embedding_dropout(self.embedding(top1))
             output = sentence_embed[:, t] if teacher_force else top1
