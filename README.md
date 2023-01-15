@@ -18,7 +18,7 @@ All the training, validation and test data in the `data_sentences` folder.
 
 You can download visualBERT model from [link](https://huggingface.co/uclanlp/visualbert-vqa-coco-pre)
 
-## Training
+## Training & Evaluation
 
 ```python
 python train.py
