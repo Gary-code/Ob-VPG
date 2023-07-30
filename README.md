@@ -1,6 +1,6 @@
 # Ob-VPG: Object-level Visual Paraphrase Generation
 
-> Official code for [Visual Paraphrase Generation with Key Information Retained]()
+Released code for paper [Visual Paraphrase Generation with Key Information Retained](https://dl.acm.org/doi/10.1145/3585010) in TOMM 2023.
 
 ![model-614](./pic/model.png)
 
@@ -20,6 +20,24 @@ You can download visualBERT model from [link](https://huggingface.co/uclanlp/vis
 
 ## Training & Evaluation
 
-```python
+```sh
 python train.py
 ```
+
+## Reference
+
+```
+@article{xie2023visual,
+  title={Visual paraphrase generation with key information retained},
+  author={Xie, Jiayuan and Chen, Jiali and Cai, Yi and Huang, Qingbao and Li, Qing},
+  journal={ACM Transactions on Multimedia Computing, Communications and Applications},
+  volume={19},
+  number={6},
+  pages={1--19},
+  year={2023},
+  publisher={ACM New York, NY}
+}
+```
+
+
+
